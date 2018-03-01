@@ -35,7 +35,7 @@ class Passive extends Connector {
     .then(() => this.getPort())
     .then(port => {
       const connectionHandler = socket => {
-        if (this.connection.commandSocket.remoteAddress !== socket.remoteAddress) {
+        if (this.connection.checkMatchingIP === true && this.connection.commandSocket.remoteAddress !== socket.remoteAddress) {
           this.log.error({
             pasv_connection: socket.remoteAddress,
             cmd_connection: this.connection.commandSocket.remoteAddress

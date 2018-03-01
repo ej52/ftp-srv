@@ -21,6 +21,7 @@ class FtpConnection extends EventEmitter {
     this.bufferSize = false;
     this._restByteCount = 0;
     this._secure = false;
+    this.checkMatchingIP = options.checkMatchingIP;
 
     this.connector = new BaseConnector(this);
 

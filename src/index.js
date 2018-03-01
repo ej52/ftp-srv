@@ -21,7 +21,8 @@ class FtpServer extends EventEmitter {
       blacklist: [],
       whitelist: [],
       greeting: null,
-      tls: false
+      tls: false,
+      checkMatchingIP: true
     }, options);
     this._greeting = this.setupGreeting(this.options.greeting);
     this._features = this.setupFeaturesMessage();
@@ -35,7 +36,7 @@ class FtpServer extends EventEmitter {
     this.url = nodeUrl.parse(url || 'ftp://127.0.0.1:21');
 
     const serverConnectionHandler = socket => {
-      let connection = new Connection(this, {log: this.log, socket});
+      let connection = new Connection(this, {log: this.log, socket, checkMatchingIP: this.options.checkMatchingIP});
       this.connections[connection.id] = connection;
 
       socket.on('close', () => this.disconnectClient(connection.id));
