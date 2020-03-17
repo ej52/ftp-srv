@@ -7,87 +7,118 @@ const net = require('net');
 const bunyan = require('bunyan');
 
 const PassiveConnector = require('../../src/connector/passive');
+const {getNextPortFactory} = require('../../src/helpers/find-port');
 
 describe('Connector - Passive //', function () {
-  let passive;
+  const host = '127.0.0.1';
   let mockConnection = {
     reply: () => Promise.resolve({}),
     close: () => Promise.resolve({}),
     encoding: 'utf8',
     log: bunyan.createLogger({name: 'passive-test'}),
-    commandSocket: {},
-    server: {options: {}}
+    commandSocket: {
+      remoteAddress: '::ffff:127.0.0.1'
+    },
+    server: {
+      url: '',
+      getNextPasvPort: getNextPortFactory(host, 1024)
+    }
   };
   let sandbox;
 
-  function shouldNotResolve() {
-    throw new Error('Should not resolve');
-  }
-
   before(() => {
-    passive = new PassiveConnector(mockConnection);
+    sandbox = sinon.sandbox.create().usingPromise(Promise);
   });
-  beforeEach(() => {
-    sandbox = sinon.sandbox.create();
 
+  beforeEach(() => {
     sandbox.spy(mockConnection, 'reply');
     sandbox.spy(mockConnection, 'close');
-
-    mockConnection.commandSocket.remoteAddress = '::ffff:127.0.0.1';
-    mockConnection.server.options.pasv_range = '8000';
   });
   afterEach(() => {
     sandbox.restore();
   });
 
-  it('cannot wait for connection with no server', function () {
-    return passive.waitForConnection()
-    .then(shouldNotResolve)
-    .catch(err => {
+  it('cannot wait for connection with no server', function (done) {
+    let passive = new PassiveConnector(mockConnection);
+    passive.waitForConnection()
+    .catch((err) => {
       expect(err.name).to.equal('ConnectorError');
+      done();
     });
   });
 
-  it('no pasv range provided', function () {
-    delete mockConnection.server.options.pasv_range;
+  describe('setup', function () {
+    before(function () {
+      sandbox.stub(mockConnection.server, 'getNextPasvPort').value(getNextPortFactory(host));
+    });
 
-    return passive.setupServer()
-    .then(shouldNotResolve)
-    .catch(err => {
-      expect(err.name).to.equal('ConnectorError');
+    it('no pasv range provided', function (done) {
+      let passive = new PassiveConnector(mockConnection);
+      passive.setupServer()
+      .catch((err) => {
+        try {
+          expect(err.name).to.contain('RangeError');
+          done();
+        } catch (ex) {
+          done(ex);
+        }
+      });
     });
   });
 
-  it('has invalid pasv range', function () {
-    mockConnection.server.options.pasv_range = -1;
+  describe('setup', function () {
+    let connection;
+    before(function () {
+      sandbox.stub(mockConnection.server, 'getNextPasvPort').value(getNextPortFactory(host, -1, -1));
 
-    return passive.setupServer()
-    .then(shouldNotResolve)
-    .catch(err => {
-      expect(err.name).to.equal('RangeError');
+      connection = new PassiveConnector(mockConnection);
+    });
+
+    it('has invalid pasv range', function (done) {
+      connection.setupServer()
+      .catch((err) => {
+        expect(err.name).to.contain('RangeError');
+        done();
+      });
     });
   });
 
   it('sets up a server', function () {
+    let passive = new PassiveConnector(mockConnection);
     return passive.setupServer()
     .then(() => {
       expect(passive.dataServer).to.exist;
+      return passive.end();
     });
   });
 
-  it('destroys existing server, then sets up a server', function () {
-    const closeFnSpy = sandbox.spy(passive.dataServer, 'close');
+  describe('setup', function () {
+    let passive;
+    let closeFnSpy;
+    beforeEach(function () {
+      passive = new PassiveConnector(mockConnection);
+      return passive.setupServer()
+      .then(() => {
+        closeFnSpy = sandbox.spy(passive.dataServer, 'close');
+      });
+    });
+    afterEach(function () {
+      return passive.end();
+    });
 
-    return passive.setupServer()
-    .then(() => {
-      expect(closeFnSpy.callCount).to.equal(1);
-      expect(passive.dataServer).to.exist;
+    it('destroys existing server, then sets up a server', function () {
+      return passive.setupServer()
+      .then(() => {
+        expect(closeFnSpy.callCount).to.equal(1);
+        expect(passive.dataServer).to.exist;
+      });
     });
   });
 
   it('refuses connection with different remote address', function (done) {
-    mockConnection.commandSocket.remoteAddress = 'bad';
+    sandbox.stub(mockConnection.commandSocket, 'remoteAddress').value('bad');
 
+    let passive = new PassiveConnector(mockConnection);
     passive.setupServer()
     .then(() => {
       expect(passive.dataServer).to.exist;
@@ -98,6 +129,8 @@ describe('Connector - Passive //', function () {
         setTimeout(() => {
           expect(passive.connection.reply.callCount).to.equal(1);
           expect(passive.connection.reply.args[0][0]).to.equal(550);
+
+          passive.end();
           done();
         }, 100);
       });
@@ -106,6 +139,7 @@ describe('Connector - Passive //', function () {
   });
 
   it('accepts connection', function () {
+    let passive = new PassiveConnector(mockConnection);
     return passive.setupServer()
     .then(() => {
       expect(passive.dataServer).to.exist;

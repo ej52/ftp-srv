@@ -7,12 +7,12 @@ module.exports = {
     if (!this.fs) return this.reply(550, 'File system not instantiated');
     if (!this.fs.mkdir) return this.reply(402, 'Not supported by file system');
 
-    return Promise.resolve(this.fs.mkdir(command.arg))
-    .then(dir => {
+    return Promise.try(() => this.fs.mkdir(command.arg))
+    .then((dir) => {
       const path = dir ? `"${escapePath(dir)}"` : undefined;
       return this.reply(257, path);
     })
-    .catch(err => {
+    .catch((err) => {
       log.error(err);
       return this.reply(550, err.message);
     });

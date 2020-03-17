@@ -1,5 +1,6 @@
 import * as tls from 'tls'
 import { Stats } from 'fs'
+import { EventEmitter } from 'events';
 
 export class FileSystem {
 
@@ -40,7 +41,7 @@ export class FileSystem {
     getUniqueName(): string;
 }
 
-export class FtpConnection {
+export class FtpConnection extends EventEmitter {
 	server: FtpServer;
 	id: string;
 	log: any;
@@ -58,18 +59,22 @@ export class FtpConnection {
 }
 
 export interface FtpServerOptions {
-    pasv_range?: number | string,
+    url?: string,
+    pasv_min?: number,
+    pasv_max?: number,
+    pasv_url?: string,
     greeting?: string | string[],
-    tls?: tls.SecureContext | false,
+    tls?: tls.SecureContextOptions | false,
     anonymous?: boolean,
     blacklist?: Array<string>,
     whitelist?: Array<string>,
     file_format?: (stat: Stats) => string | Promise<string> | "ls" | "ep",
-	log?: any
+	log?: any,
+	timeout?: number
 }
 
-export class FtpServer {
-    constructor(url: string, options?: FtpServerOptions);
+export class FtpServer extends EventEmitter {
+    constructor(options?: FtpServerOptions);
 
     readonly isTLS: boolean;
 
@@ -77,7 +82,7 @@ export class FtpServer {
 
     emitPromise(action: any, ...data: any[]): Promise<any>;
 
-    emit(action: any, ...data: any[]): void;
+    // emit is exported from super class
 
     setupTLS(_tls: boolean): boolean | {
       cert: string;
@@ -107,7 +112,14 @@ export class FtpServer {
             whitelist?: Array<string>
         }) => void,
 		reject: (err?: Error) => void
-	) => void)
+  ) => void): this;
+
+	on(event: "disconnect", listener: (
+		data: {
+      connection: FtpConnection,
+      id: string
+		}
+	) => void): this;
 
 	on(event: "client-error", listener: (
 		data: {
@@ -115,7 +127,7 @@ export class FtpServer {
 			context: string,
 			error: Error,
 		}
-	) => void)
+	) => void): this;
 }
 
 export {FtpServer as FtpSrv};

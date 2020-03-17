@@ -11,11 +11,24 @@ module.exports = {
 
     return this.connector.waitForConnection()
     .tap(() => this.commandSocket.pause())
-    .then(() => Promise.resolve(this.fs.write(fileName, {append, start: this.restByteCount})))
-    .then(stream => {
-      const destroyConnection = (connection, reject) => err => {
-        if (connection) connection.destroy(err);
-        reject(err);
+    .then(() => Promise.try(() => this.fs.write(fileName, {append, start: this.restByteCount})))
+    .then((fsResponse) => {
+      let {stream, clientPath} = fsResponse;
+      if (!stream && !clientPath) {
+        stream = fsResponse;
+        clientPath = fileName;
+      }
+      const serverPath = stream.path || fileName;
+
+      const destroyConnection = (connection, reject) => (err) => {
+        try {
+          if (connection) {
+            if (connection.writable) connection.end();
+            connection.destroy(err);
+          }
+        } finally {
+          reject(err);
+        }
       };
 
       const streamPromise = new Promise((resolve, reject) => {
@@ -24,10 +37,10 @@ module.exports = {
       });
 
       const socketPromise = new Promise((resolve, reject) => {
-        this.connector.socket.on('data', data => {
+        this.connector.socket.on('data', (data) => {
           if (this.connector.socket) this.connector.socket.pause();
-          if (stream) {
-            stream.write(data, this.transferType, () => this.connector.socket && this.connector.socket.resume());
+          if (stream && stream.writable) {
+            stream.write(data, () => this.connector.socket && this.connector.socket.resume());
           }
         });
         this.connector.socket.once('end', () => {
@@ -41,16 +54,16 @@ module.exports = {
       this.restByteCount = 0;
 
       return this.reply(150).then(() => this.connector.socket.resume())
-      .then(() => Promise.join(streamPromise, socketPromise))
-      .tap(() => this.emit('STOR', null, fileName))
+      .then(() => Promise.all([streamPromise, socketPromise]))
+      .tap(() => this.emit('STOR', null, serverPath))
+      .then(() => this.reply(226, clientPath))
       .finally(() => stream.destroy && stream.destroy());
     })
-    .then(() => this.reply(226, fileName))
-    .catch(Promise.TimeoutError, err => {
+    .catch(Promise.TimeoutError, (err) => {
       log.error(err);
       return this.reply(425, 'No connection established');
     })
-    .catch(err => {
+    .catch((err) => {
       log.error(err);
       this.emit('STOR', err);
       return this.reply(550, err.message);

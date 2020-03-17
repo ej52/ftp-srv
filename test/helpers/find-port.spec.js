@@ -1,35 +1,55 @@
 /* eslint no-unused-expressions: 0 */
 const {expect} = require('chai');
-const {Server} = require('net');
-const sinon = require('sinon');
+const net = require('net');
 
-const findPort = require('../../src/helpers/find-port');
+const {getNextPortFactory, portNumberGenerator} = require('../../src/helpers/find-port');
 
-describe('helpers // find-port', function () {
-  let sandbox;
-
-  beforeEach(() => {
-    sandbox = sinon.sandbox.create();
-
-    sandbox.spy(Server.prototype, 'listen');
-  });
-  afterEach(() => {
-    sandbox.restore();
-  });
-
-  it('finds a port', () => {
-    return findPort(1)
-    .then(port => {
-      expect(Server.prototype.listen.callCount).to.be.above(1);
-      expect(port).to.be.above(1);
+describe('getNextPortFactory', function () {
+  describe('portNumberGenerator', () => {
+    it('loops through given set of numbers', () => {
+      const nextNumber = portNumberGenerator(1, 5);
+      expect(nextNumber.next().value).to.equal(1);
+      expect(nextNumber.next().value).to.equal(2);
+      expect(nextNumber.next().value).to.equal(3);
+      expect(nextNumber.next().value).to.equal(4);
+      expect(nextNumber.next().value).to.equal(5);
+      expect(nextNumber.next().value).to.equal(1);
+      expect(nextNumber.next().value).to.equal(2);
     });
   });
 
-  it('does not find a port', () => {
-    return findPort(1, 2)
-    .then(() => expect(1).to.equal(2)) // should not happen
-    .catch(err => {
-      expect(err).to.exist;
+  describe('keeps trying new ports', () => {
+    let getNextPort;
+    let serverAlreadyRunning;
+    beforeEach((done) => {
+      getNextPort = getNextPortFactory('::', 8821);
+
+      serverAlreadyRunning = net.createServer();
+      serverAlreadyRunning.listen(8821, () => done());
+    });
+
+    afterEach((done) => {
+      serverAlreadyRunning.close(() => done());
+    });
+
+    it('test', () => {
+      return getNextPort()
+      .then((port) => {
+        expect(port).to.equal(8822);
+      });
+    });
+  });
+
+  it('finds ports concurrently', () => {
+    const portStart = 10000;
+    const getCount = 100;
+
+    const getNextPort = getNextPortFactory('::', portStart);
+    const portFinders = new Array(getCount).fill().map(() => getNextPort());
+    return Promise.all(portFinders)
+    .then((ports) => {
+      expect(ports.length).to.equal(getCount);
+      expect(ports).to.eql(new Array(getCount).fill().map((v, i) => i + portStart));
     });
   });
 });

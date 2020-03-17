@@ -4,37 +4,47 @@ const nodeUrl = require('url');
 const buyan = require('bunyan');
 const net = require('net');
 const tls = require('tls');
-const fs = require('fs');
 const EventEmitter = require('events');
 
 const Connection = require('./connection');
-const resolveHost = require('./helpers/resolve-host');
+const {getNextPortFactory} = require('./helpers/find-port');
 
 class FtpServer extends EventEmitter {
-  constructor(url, options = {}) {
+  constructor(options = {}) {
     super();
-    this.options = _.merge({
+    this.options = Object.assign({
       log: buyan.createLogger({name: 'ftp-srv'}),
+      url: 'ftp://127.0.0.1:21',
+      pasv_min: 1024,
+      pasv_max: 65535,
+      pasv_url: null,
       anonymous: false,
-      pasv_range: 22,
       file_format: 'ls',
       blacklist: [],
       whitelist: [],
       greeting: null,
-      tls: false
+      tls: false,
+      timeout: 0
     }, options);
+
     this._greeting = this.setupGreeting(this.options.greeting);
     this._features = this.setupFeaturesMessage();
-    this._tls = this.setupTLS(this.options.tls);
 
     delete this.options.greeting;
-    delete this.options.tls;
 
     this.connections = {};
     this.log = this.options.log;
-    this.url = nodeUrl.parse(url || 'ftp://127.0.0.1:21');
+    this.url = nodeUrl.parse(this.options.url);
+    this.getNextPasvPort = getNextPortFactory(
+      _.get(this, 'url.hostname'),
+      _.get(this, 'options.pasv_min'),
+      _.get(this, 'options.pasv_max'));
 
-    const serverConnectionHandler = socket => {
+    const timeout = Number(this.options.timeout);
+    this.options.timeout = isNaN(timeout) ? 0 : Number(timeout);
+
+    const serverConnectionHandler = (socket) => {
+      socket.setTimeout(this.options.timeout);
       let connection = new Connection(this, {log: this.log, socket});
       this.connections[connection.id] = connection;
 
@@ -43,36 +53,40 @@ class FtpServer extends EventEmitter {
       const greeting = this._greeting || [];
       const features = this._features || 'Ready';
       return connection.reply(220, ...greeting, features)
-      .finally(() => socket.resume());
+        .finally(() => socket.resume());
     };
-    const serverOptions = _.assign(this.isTLS ? this._tls : {}, {pauseOnConnect: true});
+    const serverOptions = Object.assign({}, this.isTLS ? this.options.tls : {}, {pauseOnConnect: true});
 
     this.server = (this.isTLS ? tls : net).createServer(serverOptions, serverConnectionHandler);
-    this.server.on('error', err => this.log.error(err, '[Event] error'));
+    this.server.on('error', (err) => this.log.error(err, '[Event] error'));
 
-    process.on('SIGTERM', () => this.quit());
-    process.on('SIGINT', () => this.quit());
-    process.on('SIGQUIT', () => this.quit());
+    const quit = _.debounce(this.quit.bind(this), 100);
+
+    process.on('SIGTERM', quit);
+    process.on('SIGINT', quit);
+    process.on('SIGQUIT', quit);
   }
 
   get isTLS() {
-    return this.url.protocol === 'ftps:' && this._tls;
+    return this.url.protocol === 'ftps:' && this.options.tls;
   }
 
   listen() {
-    return resolveHost(this.url.hostname)
-    .then(hostname => {
-      this.url.hostname = hostname;
-      return new Promise((resolve, reject) => {
-        this.server.listen(this.url.port, err => {
-          if (err) return reject(err);
-          this.log.info({
-            protocol: this.url.protocol.replace(/\W/g, ''),
-            ip: this.url.hostname,
-            port: this.url.port
-          }, 'Listening');
-          resolve('Listening');
-        });
+    if (!this.options.pasv_url) {
+      this.log.warn('Passive URL not set. Passive connections not available.');
+    }
+
+    return new Promise((resolve, reject) => {
+      this.server.once('error', reject);
+      this.server.listen(this.url.port, this.url.hostname, (err) => {
+        this.server.removeListener('error', reject);
+        if (err) return reject(err);
+        this.log.info({
+          protocol: this.url.protocol.replace(/\W/g, ''),
+          ip: this.url.hostname,
+          port: this.url.port
+        }, 'Listening');
+        resolve('Listening');
       });
     });
   }
@@ -81,15 +95,6 @@ class FtpServer extends EventEmitter {
     return new Promise((resolve, reject) => {
       const params = _.concat(data, [resolve, reject]);
       this.emit.call(this, action, ...params);
-    });
-  }
-
-  setupTLS(_tls) {
-    if (!_tls) return false;
-    return _.assign({}, _tls, {
-      cert: _tls.cert ? fs.readFileSync(_tls.cert) : undefined,
-      key: _tls.key ? fs.readFileSync(_tls.key) : undefined,
-      ca: _tls.ca ? Array.isArray(_tls.ca) ? _tls.ca.map(_ca => fs.readFileSync(_ca)) : [fs.readFileSync(_tls.ca)] : undefined
     });
   }
 
@@ -111,9 +116,10 @@ class FtpServer extends EventEmitter {
   }
 
   disconnectClient(id) {
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
       const client = this.connections[id];
       if (!client) return resolve();
+      this.emit('disconnect', {connection: client, id});
       delete this.connections[id];
       try {
         client.close(0);
@@ -133,9 +139,9 @@ class FtpServer extends EventEmitter {
   close() {
     this.log.info('Server closing...');
     this.server.maxConnections = 0;
-    return Promise.map(Object.keys(this.connections), id => Promise.try(this.disconnectClient.bind(this, id)))
-    .then(() => new Promise(resolve => {
-      this.server.close(err => {
+    return Promise.map(Object.keys(this.connections), (id) => Promise.try(this.disconnectClient.bind(this, id)))
+    .then(() => new Promise((resolve) => {
+      this.server.close((err) => {
         if (err) this.log.error(err, 'Error closing server');
         resolve('Closed');
       });

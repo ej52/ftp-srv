@@ -11,12 +11,14 @@ module.exports = {
     const from = this.renameFrom;
     const to = command.arg;
 
-    return Promise.resolve(this.fs.rename(from, to))
+    return Promise.try(() => this.fs.rename(from, to))
     .then(() => {
       return this.reply(250);
     })
-    .catch(err => {
+    .tap(() => this.emit('RNTO', null, to))
+    .catch((err) => {
       log.error(err);
+      this.emit('RNTO', err);
       return this.reply(550, err.message);
     })
     .finally(() => {

@@ -16,33 +16,34 @@ module.exports = {
     const path = command.arg || '.';
     return this.connector.waitForConnection()
     .tap(() => this.commandSocket.pause())
-    .then(() => Promise.resolve(this.fs.get(path)))
-    .then(stat => stat.isDirectory() ? Promise.resolve(this.fs.list(path)) : [stat])
-    .then(files => {
-      const getFileMessage = file => {
+    .then(() => Promise.try(() => this.fs.get(path)))
+    .then((stat) => stat.isDirectory() ? Promise.try(() => this.fs.list(path)) : [stat])
+    .then((files) => {
+      const getFileMessage = (file) => {
         if (simple) return file.name;
         return getFileStat(file, _.get(this, 'server.options.file_format', 'ls'));
       };
 
-      const fileList = files.map(file => {
+      return Promise.try(() => files.map((file) => {
         const message = getFileMessage(file);
         return {
           raw: true,
           message,
           socket: this.connector.socket
         };
-      });
-      return this.reply(150)
-      .then(() => {
-        if (fileList.length) return this.reply({}, ...fileList);
-      });
+      }));
     })
-    .then(() => this.reply(226))
-    .catch(Promise.TimeoutError, err => {
+    .tap(() => this.reply(150))
+    .then((fileList) => {
+      if (fileList.length) return this.reply({}, ...fileList);
+      return this.reply({socket: this.connector.socket, useEmptyMessage: true});
+    })
+    .tap(() => this.reply(226))
+    .catch(Promise.TimeoutError, (err) => {
       log.error(err);
       return this.reply(425, 'No connection established');
     })
-    .catch(err => {
+    .catch((err) => {
       log.error(err);
       return this.reply(451, err.message || 'No directory');
     })

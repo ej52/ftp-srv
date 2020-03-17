@@ -22,10 +22,10 @@ describe('Integration', function () {
   const clientDirectory = `${process.cwd()}/test_tmp`;
 
   before(() => {
-    return startServer('ftp://127.0.0.1:8880');
+    return startServer({url: 'ftp://127.0.0.1:8880'});
   });
   beforeEach(() => {
-    sandbox = sinon.sandbox.create();
+    sandbox = sinon.sandbox.create().usingPromise(Promise);
   });
   afterEach(() => sandbox.restore());
   after(() => server.close());
@@ -36,10 +36,20 @@ describe('Integration', function () {
   });
   after(() => directoryPurge(clientDirectory));
 
-  function startServer(url, options = {}) {
-    server = new FtpServer(url, _.assign({
+  function readFile(path) {
+    return new Promise((resolve, reject) => {
+      fs.readFile(path, 'utf8', (err, data) => {
+        if (err) reject(err);
+        else resolve(data);
+      });
+    });
+  }
+
+  function startServer(options = {}) {
+    server = new FtpServer(_.assign({
       log,
-      pasv_range: 8881,
+      pasv_url: '127.0.0.1',
+      pasv_min: 8881,
       greeting: ['hello', 'world'],
       anonymous: true
     }, options));
@@ -55,7 +65,7 @@ describe('Integration', function () {
     return new Promise((resolve, reject) => {
       client = new FtpClient();
       client.once('ready', () => resolve(client));
-      client.once('error', err => reject(err));
+      client.once('error', (err) => reject(err));
       client.connect(_.assign({
         host: server.url.hostname,
         port: server.url.port,
@@ -63,7 +73,7 @@ describe('Integration', function () {
         password: 'test'
       }, options));
     })
-    .then(instance => {
+    .then((instance) => {
       client = instance;
     });
   }
@@ -71,8 +81,8 @@ describe('Integration', function () {
   function closeClient() {
     return new Promise((resolve, reject) => {
       client.once('close', () => resolve());
-      client.once('error', err => reject(err));
-      client.logout(err => {
+      client.once('error', (err) => reject(err));
+      client.logout((err) => {
         expect(err).to.be.undefined;
       });
     });
@@ -83,7 +93,7 @@ describe('Integration', function () {
     if (!dirExists) return;
 
     const list = fs.readdirSync(dir);
-    list.map(item => nodePath.resolve(dir, item)).forEach(item => {
+    list.map((item) => nodePath.resolve(dir, item)).forEach((item) => {
       const itemExists = fs.existsSync(dir);
       if (!itemExists) return;
 
@@ -104,7 +114,7 @@ describe('Integration', function () {
 
     after(() => directoryPurge(`${clientDirectory}/${name}/`));
 
-    it('STAT', done => {
+    it('STAT', (done) => {
       client.status((err, status) => {
         expect(err).to.not.exist;
         expect(status).to.equal('Status OK');
@@ -112,7 +122,7 @@ describe('Integration', function () {
       });
     });
 
-    it('SYST', done => {
+    it('SYST', (done) => {
       client.system((err, os) => {
         expect(err).to.not.exist;
         expect(os).to.equal('UNIX');
@@ -120,7 +130,7 @@ describe('Integration', function () {
       });
     });
 
-    it('CWD ..', done => {
+    it('CWD ..', (done) => {
       client.cwd('..', (err, data) => {
         expect(err).to.not.exist;
         expect(data).to.equal('/');
@@ -128,7 +138,7 @@ describe('Integration', function () {
       });
     });
 
-    it(`CWD ${name}`, done => {
+    it(`CWD ${name}`, (done) => {
       client.cwd(`${name}`, (err, data) => {
         expect(err).to.not.exist;
         expect(data).to.equal(`/${name}`);
@@ -136,7 +146,7 @@ describe('Integration', function () {
       });
     });
 
-    it('PWD', done => {
+    it('PWD', (done) => {
       client.pwd((err, data) => {
         expect(err).to.not.exist;
         expect(data).to.equal(`/${name}`);
@@ -144,7 +154,7 @@ describe('Integration', function () {
       });
     });
 
-    it('LIST .', done => {
+    it('LIST .', (done) => {
       client.list('.', (err, data) => {
         expect(err).to.not.exist;
         expect(data).to.be.an('array');
@@ -154,7 +164,7 @@ describe('Integration', function () {
       });
     });
 
-    it('LIST fake.txt', done => {
+    it('LIST fake.txt', (done) => {
       client.list('fake.txt', (err, data) => {
         expect(err).to.not.exist;
         expect(data).to.be.an('array');
@@ -164,39 +174,39 @@ describe('Integration', function () {
       });
     });
 
-    it('STOR fail.txt', done => {
+    it('STOR fail.txt', (done) => {
       const buffer = Buffer.from('test text file');
       const fsPath = `${clientDirectory}/${name}/fail.txt`;
 
       sandbox.stub(connection.fs, 'write').callsFake(function () {
-        const stream = fs.createWriteStream(fsPath, {flags: 'w+'});
+        const stream = fs.createWriteStream(fsPath, {flags: 'w+', autoClose: false});
         stream.on('error', () => fs.existsSync(fsPath) && fs.unlinkSync(fsPath));
         stream.on('close', () => stream.end());
-        setTimeout(() => stream.emit('error', new Error('STOR fail test')));
+        setImmediate(() => stream.emit('error', new Error('STOR fail test')));
         return stream;
       });
 
-      client.put(buffer, 'fail.txt', err => {
-        setTimeout(() => {
+      client.put(buffer, 'fail.txt', (err) => {
+        expect(err).to.exist;
+        setImmediate(() => {
           const fileExists = fs.existsSync(fsPath);
-          expect(err).to.exist;
           expect(fileExists).to.equal(false);
           done();
         });
       });
     });
 
-    it('STOR tést.txt', done => {
+    it('STOR tést.txt', (done) => {
       const buffer = Buffer.from('test text file');
       const fsPath = `${clientDirectory}/${name}/tést.txt`;
 
-      connection.once('STOR', err => {
+      connection.once('STOR', (err) => {
         expect(err).to.not.exist;
       });
 
-      client.put(buffer, 'tést.txt', err => {
+      client.put(buffer, 'tést.txt', (err) => {
         expect(err).to.not.exist;
-        setTimeout(() => {
+        setImmediate(() => {
           expect(fs.existsSync(fsPath)).to.equal(true);
           fs.readFile(fsPath, (fserr, data) => {
             expect(fserr).to.not.exist;
@@ -207,12 +217,30 @@ describe('Integration', function () {
       });
     });
 
-    it('APPE tést.txt', done => {
+    it('STOR logo.png', (done) => {
+      const logo = `${__dirname}/../logo.png`;
+      const fsPath = `${clientDirectory}/${name}/logo.png`;
+
+      client.put(logo, 'logo.png', (err) => {
+        expect(err).to.not.exist;
+        setImmediate(() => {
+          expect(fs.existsSync(fsPath)).to.equal(true);
+
+          const logoContents = fs.readFileSync(logo);
+          const transferedContects = fs.readFileSync(fsPath);
+
+          expect(logoContents.equals(transferedContects));
+          done();
+        });
+      });
+    });
+
+    it('APPE tést.txt', (done) => {
       const buffer = Buffer.from(', awesome!');
       const fsPath = `${clientDirectory}/${name}/tést.txt`;
-      client.append(buffer, 'tést.txt', err => {
+      client.append(buffer, 'tést.txt', (err) => {
         expect(err).to.not.exist;
-        setTimeout(() => {
+        setImmediate(() => {
           expect(fs.existsSync(fsPath)).to.equal(true);
           fs.readFile(fsPath, (fserr, data) => {
             expect(fserr).to.not.exist;
@@ -223,15 +251,15 @@ describe('Integration', function () {
       });
     });
 
-    it('RETR tést.txt', done => {
-      connection.once('RETR', err => {
+    it('RETR tést.txt', (done) => {
+      connection.once('RETR', (err) => {
         expect(err).to.not.exist;
       });
 
       client.get('tést.txt', (err, stream) => {
         expect(err).to.not.exist;
         let text = '';
-        stream.on('data', data => {
+        stream.on('data', (data) => {
           text += data.toString();
         });
         stream.on('end', () => {
@@ -242,8 +270,8 @@ describe('Integration', function () {
       });
     });
 
-    it('RNFR tést.txt, RNTO awesome.txt', done => {
-      client.rename('tést.txt', 'awesome.txt', err => {
+    it('RNFR tést.txt, RNTO awesome.txt', (done) => {
+      client.rename('tést.txt', 'awesome.txt', (err) => {
         expect(err).to.not.exist;
         expect(fs.existsSync(`${clientDirectory}/${name}/tést.txt`)).to.equal(false);
         expect(fs.existsSync(`${clientDirectory}/${name}/awesome.txt`)).to.equal(true);
@@ -255,7 +283,7 @@ describe('Integration', function () {
       });
     });
 
-    it('SIZE awesome.txt', done => {
+    it('SIZE awesome.txt', (done) => {
       client.size('awesome.txt', (err, size) => {
         expect(err).to.not.exist;
         expect(size).to.be.a('number');
@@ -263,7 +291,7 @@ describe('Integration', function () {
       });
     });
 
-    it('MDTM awesome.txt', done => {
+    it('MDTM awesome.txt', (done) => {
       client.lastMod('awesome.txt', (err, modTime) => {
         expect(err).to.not.exist;
         expect(modTime).to.be.instanceOf(Date);
@@ -272,14 +300,14 @@ describe('Integration', function () {
       });
     });
 
-    it.skip('MLSD .', done => {
+    it.skip('MLSD .', (done) => {
       client.mlsd('.', () => {
         done();
       });
     });
 
-    it('SITE CHMOD 700 awesome.txt', done => {
-      client.site('CHMOD 600 awesome.txt', err => {
+    it('SITE CHMOD 700 awesome.txt', (done) => {
+      client.site('CHMOD 600 awesome.txt', (err) => {
         expect(err).to.not.exist;
         fs.stat(`${clientDirectory}/${name}/awesome.txt`, (fserr, stats) => {
           expect(fserr).to.not.exist;
@@ -290,27 +318,27 @@ describe('Integration', function () {
       });
     });
 
-    it('DELE awesome.txt', done => {
-      client.delete('awesome.txt', err => {
+    it('DELE awesome.txt', (done) => {
+      client.delete('awesome.txt', (err) => {
         expect(err).to.not.exist;
         expect(fs.existsSync(`${clientDirectory}/${name}/awesome.txt`)).to.equal(false);
         done();
       });
     });
 
-    it('MKD témp', done => {
+    it('MKD témp', (done) => {
       const path = `${clientDirectory}/${name}/témp`;
       if (fs.existsSync(path)) {
         fs.rmdirSync(path);
       }
-      client.mkdir('témp', err => {
+      client.mkdir('témp', (err) => {
         expect(err).to.not.exist;
         expect(fs.existsSync(path)).to.equal(true);
         done();
       });
     });
 
-    it('CWD témp', done => {
+    it('CWD témp', (done) => {
       client.cwd('témp', (err, data) => {
         expect(err).to.not.exist;
         expect(data).to.to.be.a('string');
@@ -318,28 +346,61 @@ describe('Integration', function () {
       });
     });
 
-    it('CDUP', done => {
-      client.cdup(err => {
+    it('CDUP', (done) => {
+      client.cdup((err) => {
         expect(err).to.not.exist;
         done();
       });
     });
 
-    it('RMD témp', done => {
-      client.rmdir('témp', err => {
+    it('RMD témp', (done) => {
+      client.rmdir('témp', (err) => {
         expect(err).to.not.exist;
         expect(fs.existsSync(`${clientDirectory}/${name}/témp`)).to.equal(false);
         done();
       });
     });
 
-    it('CDUP', done => {
-      client.cdup(err => {
+    it('CDUP', (done) => {
+      client.cdup((err) => {
         expect(err).to.not.exist;
         done();
       });
     });
   }
+
+  describe('Server events', function () {
+    const disconnect = sinon.spy();
+    const login = sinon.spy();
+
+    before(() => {
+      server.on('login', login);
+      server.on('disconnect', disconnect);
+      return connectClient({
+        host: server.url.hostname,
+        port: server.url.port,
+        user: 'test',
+        password: 'test'
+      });
+    });
+
+    after(() => {
+      server.off('login', login);
+      server.off('disconnect', disconnect);
+    })
+
+    it('should fire a login event on connect', () => {
+      expect(login.calledOnce).to.be.true;
+    });
+
+    it('should fire a close event on disconnect', (done) => {
+      client.end();
+      setTimeout(() => {
+        expect(disconnect.calledOnce).to.be.true;
+        done();
+      }, 100)
+    });
+  });
 
   describe('#ASCII', function () {
     before(() => {
@@ -353,8 +414,8 @@ describe('Integration', function () {
 
     after(() => closeClient(client));
 
-    it('TYPE A', done => {
-      client.ascii(err => {
+    it('TYPE A', (done) => {
+      client.ascii((err) => {
         expect(err).to.not.exist;
         done();
       });
@@ -375,8 +436,8 @@ describe('Integration', function () {
 
     after(() => closeClient(client));
 
-    it('TYPE I', done => {
-      client.binary(err => {
+    it('TYPE I', (done) => {
+      client.binary((err) => {
         expect(err).to.not.exist;
         done();
       });
@@ -385,15 +446,17 @@ describe('Integration', function () {
     runFileSystemTests('binary');
   });
 
-  describe.skip('#EXPLICIT', function () {
+  describe('#EXPLICIT', function () {
     before(() => {
       return server.close()
-      .then(() => startServer('ftp://127.0.0.1:8880', {
-        tls: {
-          key: `${process.cwd()}/test/cert/server.key`,
-          cert: `${process.cwd()}/test/cert/server.crt`,
-          ca: `${process.cwd()}/test/cert/server.csr`
-        }
+      .then(() => Promise.all([
+        readFile(`${process.cwd()}/test/cert/server.key`),
+        readFile(`${process.cwd()}/test/cert/server.crt`),
+        readFile(`${process.cwd()}/test/cert/server.csr`)
+      ]))
+      .then(([key, cert, ca]) => startServer({
+        url: 'ftp://127.0.0.1:8881',
+        tls: {key, cert, ca}
       }))
       .then(() => {
         return connectClient({
@@ -414,12 +477,14 @@ describe('Integration', function () {
   describe.skip('#IMPLICIT', function () {
     before(() => {
       return server.close()
-      .then(() => startServer('ftps://127.0.0.1:8880', {
-        tls: {
-          key: `${process.cwd()}/test/cert/server.key`,
-          cert: `${process.cwd()}/test/cert/server.crt`,
-          ca: `${process.cwd()}/test/cert/server.csr`
-        }
+      .then(() => Promise.all([
+        readFile(`${process.cwd()}/test/cert/server.key`),
+        readFile(`${process.cwd()}/test/cert/server.crt`),
+        readFile(`${process.cwd()}/test/cert/server.csr`)
+      ]))
+      .then(([key, cert, ca]) => startServer({
+        url: 'ftps://127.0.0.1:8882',
+        tls: {key, cert, ca}
       }))
       .then(() => {
         return connectClient({

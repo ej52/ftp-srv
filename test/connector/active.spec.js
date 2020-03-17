@@ -6,9 +6,11 @@ const net = require('net');
 const tls = require('tls');
 
 const ActiveConnector = require('../../src/connector/active');
-const findPort = require('../../src/helpers/find-port');
+const {getNextPortFactory} = require('../../src/helpers/find-port');
 
 describe('Connector - Active //', function () {
+  const host = '127.0.0.1';
+  let getNextPort = getNextPortFactory(host, 1024);
   let PORT;
   let active;
   let mockConnection = {};
@@ -18,24 +20,24 @@ describe('Connector - Active //', function () {
   before(() => {
     active = new ActiveConnector(mockConnection);
   });
-  beforeEach(done => {
-    sandbox = sinon.sandbox.create();
+  beforeEach((done) => {
+    sandbox = sinon.sandbox.create().usingPromise(Promise);
 
-    findPort()
-    .then(port => {
+    getNextPort()
+    .then((port) => {
       PORT = port;
       server = net.createServer()
-      .on('connection', socket => socket.destroy())
+      .on('connection', (socket) => socket.destroy())
       .listen(PORT, () => done());
     });
   });
-  afterEach(done => {
+  afterEach((done) => {
     sandbox.restore();
     server.close(done);
   });
 
   it('sets up a connection', function () {
-    return active.setupConnection('127.0.0.1', PORT)
+    return active.setupConnection(host, PORT)
     .then(() => {
       expect(active.dataSocket).to.exist;
     });
@@ -44,7 +46,7 @@ describe('Connector - Active //', function () {
   it('destroys existing connection, then sets up a connection', function () {
     const destroyFnSpy = sandbox.spy(active.dataSocket, 'destroy');
 
-    return active.setupConnection('127.0.0.1', PORT)
+    return active.setupConnection(host, PORT)
     .then(() => {
       expect(destroyFnSpy.callCount).to.equal(1);
       expect(active.dataSocket).to.exist;
@@ -52,12 +54,12 @@ describe('Connector - Active //', function () {
   });
 
   it('waits for connection', function () {
-    return active.setupConnection('127.0.0.1', PORT)
+    return active.setupConnection(host, PORT)
     .then(() => {
       expect(active.dataSocket).to.exist;
       return active.waitForConnection();
     })
-    .then(dataSocket => {
+    .then((dataSocket) => {
       expect(dataSocket.connected).to.equal(true);
       expect(dataSocket instanceof net.Socket).to.equal(true);
       expect(dataSocket instanceof tls.TLSSocket).to.equal(false);
@@ -66,14 +68,18 @@ describe('Connector - Active //', function () {
 
   it('upgrades to a secure connection', function () {
     mockConnection.secure = true;
-    mockConnection.server = {_tls: {}};
+    mockConnection.server = {
+      options: {
+        tls: {}
+      }
+    };
 
-    return active.setupConnection('127.0.0.1', PORT)
+    return active.setupConnection(host, PORT)
     .then(() => {
       expect(active.dataSocket).to.exist;
       return active.waitForConnection();
     })
-    .then(dataSocket => {
+    .then((dataSocket) => {
       expect(dataSocket.connected).to.equal(true);
       expect(dataSocket instanceof net.Socket).to.equal(true);
       expect(dataSocket instanceof tls.TLSSocket).to.equal(true);
